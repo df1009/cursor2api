@@ -285,6 +285,7 @@ async function handleOpenAIStream(
     const model = body.model;
     const hasTools = (body.tools?.length ?? 0) > 0;
 
+    const promptTokens = Math.ceil(JSON.stringify(body.messages).length / 4);
     // 发送 role delta
     writeOpenAISSE(res, {
         id, object: 'chat.completion.chunk', created, model,
@@ -418,6 +419,12 @@ async function handleOpenAIStream(
             }],
         });
 
+        // 发送 usage 统计
+        writeOpenAISSE(res, {
+            id, object: 'chat.completion.chunk', created, model,
+            usage: { prompt_tokens: promptTokens, completion_tokens: Math.ceil(fullResponse.length / 4), total_tokens: promptTokens + Math.ceil(fullResponse.length / 4) },
+            choices: [],
+        });
         res.write('data: [DONE]\n\n');
 
     } catch (err: unknown) {
@@ -430,6 +437,7 @@ async function handleOpenAIStream(
                 finish_reason: 'stop',
             }],
         });
+        writeOpenAISSE(res, { id, object: 'chat.completion.chunk', created, model, usage: { prompt_tokens: promptTokens, completion_tokens: Math.ceil(fullResponse.length / 4), total_tokens: promptTokens + Math.ceil(fullResponse.length / 4) }, choices: [] });
         res.write('data: [DONE]\n\n');
     }
 
@@ -522,9 +530,9 @@ async function handleOpenAINonStream(
             finish_reason: finishReason,
         }],
         usage: {
-            prompt_tokens: 100,
+            prompt_tokens: Math.ceil(JSON.stringify(body.messages).length / 4),
             completion_tokens: Math.ceil(fullText.length / 4),
-            total_tokens: 100 + Math.ceil(fullText.length / 4),
+            total_tokens: Math.ceil(JSON.stringify(body.messages).length / 4) + Math.ceil(fullText.length / 4),
         },
     };
 

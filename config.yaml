@@ -10,7 +10,7 @@ timeout: 120
 # proxy: "http://127.0.0.1:7890"
 
 # Cursor 使用的模型
-cursor_model: "anthropic/claude-sonnet-4.6"
+cursor_model: "anthropic/claude-opus-4.6"
 
 # 浏览器指纹配置
 fingerprint:
