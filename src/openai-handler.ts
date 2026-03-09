@@ -130,7 +130,7 @@ function convertToAnthropicRequest(body: OpenAIChatRequest): AnthropicRequest {
     if (firstUserIdx !== -1) {
         const firstUser = messages[firstUserIdx];
         const content = typeof firstUser.content === 'string' ? firstUser.content : '';
-        if (!content.includes(INJECT_MARKER) && !content.includes('<relevant-memories>')) {
+        if (!content.includes('<relevant-memories>')) {
             messages[firstUserIdx] = {
                 ...firstUser,
                 content: INJECT_PREFIX + content,
