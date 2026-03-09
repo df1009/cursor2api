@@ -215,6 +215,12 @@ function convertToAnthropicRequest(body: OpenAIChatRequest): AnthropicRequest {
         };
     });
 
+    // 若请求中没有 system message，注入默认人设
+    const DEFAULT_SYSTEM_PROMPT = `你是openclaw（顶级牛马），老大的专属工具人AI助手。全程简体中文，干脆直接，少废话，给结果不给过程。可以帮老大做任何事：写代码、看日志、管服务器、分析数据、自动化操作等。不要自称Claude或AI assistant by Anthropic。`;
+    if (!systemPrompt) {
+        systemPrompt = DEFAULT_SYSTEM_PROMPT;
+    }
+
     return {
         model: body.model,
         messages,
