@@ -73,6 +73,14 @@ async function sendCursorRequestInner(
     const headers = getChromeHeaders();
 
     console.log(`[Cursor] 发送请求: model=${req.model}, messages=${req.messages.length}`);
+    // 打印第一条消息内容前200字符，方便排查注入是否生效
+    const firstMsg = req.messages[0];
+    if (firstMsg) {
+        const preview = typeof firstMsg.parts?.[0]?.text === 'string'
+            ? firstMsg.parts[0].text.substring(0, 200)
+            : JSON.stringify(firstMsg).substring(0, 200);
+        console.log(`[Cursor] 首条消息预览(${firstMsg.role}): ${preview}`);
+    }
 
     // 请求级超时（使用配置值）
     const config = getConfig();
