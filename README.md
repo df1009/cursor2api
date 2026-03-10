@@ -129,6 +129,22 @@ AI 按此格式输出 → 我们解析并转换为标准的 Anthropic `tool_use`
 
 ## 更新日志
 
+### v2.4.0 (2026-03-10) — 流式稳定性 + tool_choice 强制工具调用 + 完整测试套件
+
+**🔧 Bug 修复**
+- ✨ `cursor-client.ts`：固定总超时 → 空闲超时，每收到数据 chunk 重置计时，彻底解决长输出中断问题（[#12](https://github.com/7836246/cursor2api/issues/12)）
+- ✨ `converter.ts`：`tolerantParse` 三级修复策略（直接解析 → 裸换行修复 + 未闭合字符串补全 + 括号栈自动补全 → 末尾完整对象回退），彻底解决截断 JSON 解析失败（[#13](https://github.com/7836246/cursor2api/issues/13)）
+
+**✨ 新功能：tool_choice 三层强制架构**
+- ✨ `types.ts`：新增 `AnthropicToolChoice` 类型，正确解析 Claude Code 传入的 `tool_choice` 字段（之前被静默丢弃）
+- ✨ `converter.ts`：`buildToolInstructions` 支持 `tool_choice`，当值为 `any`/`tool` 时在 prompt 末尾注入 **MANDATORY** 强制约束语句
+- ✨ `handler.ts`：`tool_choice=any` 时检测模型未输出工具调用 → 自动追加强制 user 消息重试，最多 2 次，完全穿透模型的绕过行为
+
+**🧪 完整测试套件（全新）**
+- ✨ `test/unit-tolerant-parse.mjs`：18 个离线单元测试，覆盖 `tolerantParse` / `parseToolCalls` 所有边界场景
+- ✨ `test/e2e-chat.mjs`：16 个 E2E 测试，含基础问答、多轮对话、工具调用（Read/Write/Bash）、流式、边界防御
+- ✨ `test/e2e-agentic.mjs`：7 个 Claude Code Agentic 压测，完整模拟真实工具链（LS/Glob/Grep/Read/Write/Edit/Bash/TodoWrite/attempt_completion）
+
 ### v2.3.2 (2026-03-06) — 视觉预处理统一 + OpenAI 防御强化
 
 ** 视觉预处理统一化（修复 [#8](https://github.com/user/cursor2api/issues/8)）**
