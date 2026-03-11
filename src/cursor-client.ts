@@ -57,6 +57,19 @@ function getNextProxy(): string | undefined {
     return undefined;
 }
 
+async function testNode(proxyUrl: string): Promise<boolean> {
+    try {
+        const resp = await fetch('https://www.google.com', {
+            method: 'HEAD',
+            signal: AbortSignal.timeout(5000),
+            dispatcher: new ProxyAgent(proxyUrl),
+        } as RequestInit & { dispatcher?: unknown });
+        return resp.ok || resp.status < 500;
+    } catch {
+        return false;
+    }
+}
+
 async function rotateClashNode(): Promise<void> {
     const config = getConfig();
     if (!config.clashApi || !config.clashGroup) return;
@@ -66,9 +79,23 @@ async function rotateClashNode(): Promise<void> {
         console.log(`[Proxy] 加载 Clash 节点 ${clashNodes.length} 个`);
     }
     if (clashNodes.length === 0) return;
-    const node = clashNodes[proxyIndex % clashNodes.length];
-    proxyIndex++;
-    await switchClashNode(config.clashApi, config.clashGroup, node);
+    const proxy = config.proxies?.[0] || config.proxy;
+    if (!proxy) return;
+    // 最多尝试5个节点找到可用的
+    for (let i = 0; i < Math.min(5, clashNodes.length); i++) {
+        const node = clashNodes[proxyIndex % clashNodes.length];
+        proxyIndex++;
+        await switchClashNode(config.clashApi, config.clashGroup, node);
+        // 等200ms让Clash切换生效
+        await new Promise(r => setTimeout(r, 200));
+        const ok = await testNode(proxy);
+        if (ok) {
+            console.log(`[Proxy] 节点可用: ${node}`);
+            return;
+        }
+        console.warn(`[Proxy] 节点不可用，跳过: ${node}`);
+    }
+    console.warn(`[Proxy] 未找到可用节点，使用当前节点`);
 }
 
 // Chrome 浏览器请求头模拟
