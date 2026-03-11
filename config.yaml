@@ -13,6 +13,10 @@ timeout: 120
 proxies:
   - "http://127.0.0.1:7890"
 
+# Clash API 节点轮询（每次请求自动切换节点）
+clash_api: "http://127.0.0.1:9090"
+clash_group: "节点选择"
+
 # Cursor 使用的模型
 cursor_model: "anthropic/claude-sonnet-4.6"
 

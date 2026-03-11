@@ -17,6 +17,32 @@ const CURSOR_CHAT_API = 'https://cursor.com/api/chat';
 
 // ==================== 代理轮询 ====================
 let proxyIndex = 0;
+let clashNodes: string[] = [];
+let clashNodesLoaded = false;
+
+async function loadClashNodes(clashApi: string, group: string): Promise<string[]> {
+    try {
+        const resp = await fetch(`${clashApi}/proxies/${encodeURIComponent(group)}`);
+        if (!resp.ok) return [];
+        const data = await resp.json() as { all: string[] };
+        // 过滤掉非节点项
+        const skip = ['自动选择', '剩余流量', '距离下次重置', '套餐到期', 'DIRECT', 'REJECT'];
+        return (data.all || []).filter((n: string) => !skip.some(s => n.includes(s)));
+    } catch { return []; }
+}
+
+async function switchClashNode(clashApi: string, group: string, node: string): Promise<void> {
+    try {
+        await fetch(`${clashApi}/proxies/${encodeURIComponent(group)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: node }),
+        });
+        console.log(`[Proxy] 切换节点: ${node}`);
+    } catch (e) {
+        console.warn(`[Proxy] 切换节点失败: ${e}`);
+    }
+}
 
 function getNextProxy(): string | undefined {
     const config = getConfig();
@@ -29,6 +55,20 @@ function getNextProxy(): string | undefined {
     }
     if (config.proxy) return config.proxy;
     return undefined;
+}
+
+async function rotateClashNode(): Promise<void> {
+    const config = getConfig();
+    if (!config.clashApi || !config.clashGroup) return;
+    if (!clashNodesLoaded) {
+        clashNodes = await loadClashNodes(config.clashApi, config.clashGroup);
+        clashNodesLoaded = true;
+        console.log(`[Proxy] 加载 Clash 节点 ${clashNodes.length} 个`);
+    }
+    if (clashNodes.length === 0) return;
+    const node = clashNodes[proxyIndex % clashNodes.length];
+    proxyIndex++;
+    await switchClashNode(config.clashApi, config.clashGroup, node);
 }
 
 // Chrome 浏览器请求头模拟
@@ -111,6 +151,7 @@ async function sendCursorRequestInner(
     // 启动初始计时（等待服务器开始响应）
     resetIdleTimer();
 
+    await rotateClashNode();
     const proxyUrl = getNextProxy();
     const fetchOptions: RequestInit & { dispatcher?: unknown } = {
         method: 'POST',

@@ -104,6 +104,8 @@ export interface AppConfig {
     timeout: number;
     proxy?: string;
     proxies?: string[];
+    clashApi?: string;
+    clashGroup?: string;
     cursorModel: string;
     vision?: {
         enabled: boolean;
