@@ -19,6 +19,7 @@ const CURSOR_CHAT_API = 'https://cursor.com/api/chat';
 let proxyIndex = 0;
 let clashNodes: string[] = [];
 let clashNodesLoaded = false;
+let isDirect = false;
 
 async function loadClashNodes(clashApi: string, group: string): Promise<string[]> {
     try {
@@ -27,7 +28,10 @@ async function loadClashNodes(clashApi: string, group: string): Promise<string[]
         const data = await resp.json() as { all: string[] };
         // 过滤掉非节点项
         const skip = ['自动选择', '剩余流量', '距离下次重置', '套餐到期', 'DIRECT', 'REJECT'];
-        return (data.all || []).filter((n: string) => !skip.some(s => n.includes(s)));
+        const nodes = (data.all || []).filter((n: string) => !skip.some(s => n.includes(s)));
+        // 加入直连作为特殊出口
+        nodes.push('__DIRECT__');
+        return nodes;
     } catch { return []; }
 }
 
@@ -85,6 +89,13 @@ async function rotateClashNode(): Promise<void> {
     for (let i = 0; i < Math.min(5, clashNodes.length); i++) {
         const node = clashNodes[proxyIndex % clashNodes.length];
         proxyIndex++;
+        // 直连特殊出口，不切换Clash节点，不做健康检测
+        if (node === '__DIRECT__') {
+            console.log(`[Proxy] 使用直连出口`);
+            isDirect = true;
+            return;
+        }
+        isDirect = false;
         await switchClashNode(config.clashApi, config.clashGroup, node);
         // 等200ms让Clash切换生效
         await new Promise(r => setTimeout(r, 200));
@@ -179,7 +190,7 @@ async function sendCursorRequestInner(
     resetIdleTimer();
 
     await rotateClashNode();
-    const proxyUrl = getNextProxy();
+    const proxyUrl = isDirect ? undefined : getNextProxy();
     const fetchOptions: RequestInit & { dispatcher?: unknown } = {
         method: 'POST',
         headers,
