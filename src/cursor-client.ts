@@ -20,6 +20,7 @@ let proxyIndex = 0;
 let clashNodes: string[] = [];
 let clashNodesLoaded = false;
 let isDirect = false;
+let rotateLock: Promise<void> = Promise.resolve();
 
 async function loadClashNodes(clashApi: string, group: string): Promise<string[]> {
     try {
@@ -189,7 +190,16 @@ async function sendCursorRequestInner(
     // 启动初始计时（等待服务器开始响应）
     resetIdleTimer();
 
-    await rotateClashNode();
+    // 串行锁：同一时间只允许一个请求做节点切换
+    let releaseLock!: () => void;
+    const prevLock = rotateLock;
+    rotateLock = new Promise<void>(resolve => { releaseLock = resolve; });
+    await prevLock;
+    try {
+        await rotateClashNode();
+    } finally {
+        releaseLock();
+    }
     const proxyUrl = isDirect ? undefined : getNextProxy();
     const fetchOptions: RequestInit & { dispatcher?: unknown } = {
         method: 'POST',
