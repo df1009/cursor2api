@@ -15,12 +15,72 @@ import { ProxyAgent } from 'undici';
 
 const CURSOR_CHAT_API = 'https://cursor.com/api/chat';
 
-// ==================== 代理轮询 ====================
+// ==================== 节点池管理 ====================
 let proxyIndex = 0;
-let clashNodes: string[] = [];
-let clashNodesLoaded = false;
 let isDirect = false;
-let rotateLock: Promise<void> = Promise.resolve();
+let currentNode = '';
+
+const nodePool = {
+    active: [] as string[],     // 可用节点
+    inactive: [] as string[],   // 不可用节点（待恢复）
+    loaded: false,
+    recovering: false,
+};
+
+async function initNodePool(clashApi: string, group: string): Promise<void> {
+    if (nodePool.loaded) return;
+    const resp = await fetch(`${clashApi}/proxies/${encodeURIComponent(group)}`);
+    if (!resp.ok) return;
+    const data = await resp.json() as { all: string[] };
+    const skip = ['自动选择', '剩余流量', '距离下次重置', '套餐到期', 'DIRECT', 'REJECT'];
+    const nodes = (data.all || []).filter((n: string) => !skip.some(s => n.includes(s)));
+    // 加入直连特殊出口
+    nodes.push('__DIRECT__');
+    nodePool.active = nodes;
+    nodePool.loaded = true;
+    console.log(`[NodePool] 初始化节点池: ${nodes.length} 个节点`);
+    // 启动后台恢复检测（每分钟）
+    setInterval(() => recoverNodes(clashApi, group), 60 * 1000);
+}
+
+async function recoverNodes(clashApi: string, group: string): Promise<void> {
+    if (nodePool.recovering || nodePool.inactive.length === 0) return;
+    nodePool.recovering = true;
+    const proxy = getConfig().proxies?.[0] || getConfig().proxy;
+    const recovered: string[] = [];
+    for (const node of [...nodePool.inactive]) {
+        if (node === '__DIRECT__') { recovered.push(node); continue; }
+        await switchClashNode(clashApi, group, node);
+        await new Promise(r => setTimeout(r, 200));
+        if (proxy && await testNode(proxy)) {
+            recovered.push(node);
+            console.log(`[NodePool] 节点恢复: ${node}`);
+        }
+    }
+    if (recovered.length > 0) {
+        nodePool.inactive = nodePool.inactive.filter(n => !recovered.includes(n));
+        nodePool.active.push(...recovered);
+        console.log(`[NodePool] 恢复 ${recovered.length} 个节点，当前可用: ${nodePool.active.length}`);
+    }
+    nodePool.recovering = false;
+}
+
+function markNodeInactive(node: string): void {
+    if (node === '__DIRECT__') return;
+    const idx = nodePool.active.indexOf(node);
+    if (idx !== -1) {
+        nodePool.active.splice(idx, 1);
+        nodePool.inactive.push(node);
+        console.warn(`[NodePool] 节点下池: ${node}，剩余可用: ${nodePool.active.length}`);
+    }
+}
+
+function getNextNode(): string | undefined {
+    if (nodePool.active.length === 0) return undefined;
+    const node = nodePool.active[proxyIndex % nodePool.active.length];
+    proxyIndex++;
+    return node;
+}
 
 async function loadClashNodes(clashApi: string, group: string): Promise<string[]> {
     try {
@@ -78,36 +138,22 @@ async function testNode(proxyUrl: string): Promise<boolean> {
 async function rotateClashNode(): Promise<void> {
     const config = getConfig();
     if (!config.clashApi || !config.clashGroup) return;
-    if (!clashNodesLoaded) {
-        clashNodes = await loadClashNodes(config.clashApi, config.clashGroup);
-        clashNodesLoaded = true;
-        console.log(`[Proxy] 加载 Clash 节点 ${clashNodes.length} 个`);
+    await initNodePool(config.clashApi, config.clashGroup);
+    const node = getNextNode();
+    if (!node) {
+        console.warn(`[NodePool] 无可用节点，直连`);
+        isDirect = true;
+        return;
     }
-    if (clashNodes.length === 0) return;
-    const proxy = config.proxies?.[0] || config.proxy;
-    if (!proxy) return;
-    // 最多尝试5个节点找到可用的
-    for (let i = 0; i < Math.min(5, clashNodes.length); i++) {
-        const node = clashNodes[proxyIndex % clashNodes.length];
-        proxyIndex++;
-        // 直连特殊出口，不切换Clash节点，不做健康检测
-        if (node === '__DIRECT__') {
-            console.log(`[Proxy] 使用直连出口`);
-            isDirect = true;
-            return;
-        }
-        isDirect = false;
-        await switchClashNode(config.clashApi, config.clashGroup, node);
-        // 等200ms让Clash切换生效
-        await new Promise(r => setTimeout(r, 200));
-        const ok = await testNode(proxy);
-        if (ok) {
-            console.log(`[Proxy] 节点可用: ${node}`);
-            return;
-        }
-        console.warn(`[Proxy] 节点不可用，跳过: ${node}`);
+    if (node === '__DIRECT__') {
+        console.log(`[Proxy] 使用直连出口`);
+        isDirect = true;
+        return;
     }
-    console.warn(`[Proxy] 未找到可用节点，使用当前节点`);
+    isDirect = false;
+    currentNode = node;
+    await switchClashNode(config.clashApi, config.clashGroup, node);
+    console.log(`[NodePool] 使用节点: ${node}`);
 }
 
 // Chrome 浏览器请求头模拟
@@ -152,6 +198,8 @@ export async function sendCursorRequest(
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             console.error(`[Cursor] 请求失败 (${attempt}/${maxRetries}): ${msg}`);
+            // 请求失败，将当前节点标记下池
+            if (currentNode) markNodeInactive(currentNode);
             if (attempt < maxRetries) {
                 console.log(`[Cursor] 2s 后重试...`);
                 await new Promise(r => setTimeout(r, 2000));
@@ -190,16 +238,7 @@ async function sendCursorRequestInner(
     // 启动初始计时（等待服务器开始响应）
     resetIdleTimer();
 
-    // 串行锁：同一时间只允许一个请求做节点切换
-    let releaseLock!: () => void;
-    const prevLock = rotateLock;
-    rotateLock = new Promise<void>(resolve => { releaseLock = resolve; });
-    await prevLock;
-    try {
-        await rotateClashNode();
-    } finally {
-        releaseLock();
-    }
+    await rotateClashNode();
     const proxyUrl = isDirect ? undefined : getNextProxy();
     const fetchOptions: RequestInit & { dispatcher?: unknown } = {
         method: 'POST',
