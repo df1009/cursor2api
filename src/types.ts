@@ -103,6 +103,7 @@ export interface AppConfig {
     port: number;
     timeout: number;
     proxy?: string;
+    proxies?: string[];
     cursorModel: string;
     vision?: {
         enabled: boolean;

@@ -25,6 +25,7 @@ export function getConfig(): AppConfig {
             if (yaml.port) config.port = yaml.port;
             if (yaml.timeout) config.timeout = yaml.timeout;
             if (yaml.proxy) config.proxy = yaml.proxy;
+            if (yaml.proxies && Array.isArray(yaml.proxies)) config.proxies = yaml.proxies;
             if (yaml.cursor_model) config.cursorModel = yaml.cursor_model;
             if (yaml.fingerprint) {
                 if (yaml.fingerprint.user_agent) config.fingerprint.userAgent = yaml.fingerprint.user_agent;

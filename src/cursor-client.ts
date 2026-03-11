@@ -11,8 +11,25 @@
 
 import type { CursorChatRequest, CursorSSEEvent } from './types.js';
 import { getConfig } from './config.js';
+import { ProxyAgent } from 'undici';
 
 const CURSOR_CHAT_API = 'https://cursor.com/api/chat';
+
+// ==================== 代理轮询 ====================
+let proxyIndex = 0;
+
+function getNextProxy(): string | undefined {
+    const config = getConfig();
+    const proxies = config.proxies;
+    if (proxies && proxies.length > 0) {
+        const proxy = proxies[proxyIndex % proxies.length];
+        proxyIndex++;
+        console.log(`[Proxy] 使用代理 [${proxyIndex}/${proxies.length}]: ${proxy}`);
+        return proxy;
+    }
+    if (config.proxy) return config.proxy;
+    return undefined;
+}
 
 // Chrome 浏览器请求头模拟
 function getChromeHeaders(): Record<string, string> {
@@ -94,13 +111,19 @@ async function sendCursorRequestInner(
     // 启动初始计时（等待服务器开始响应）
     resetIdleTimer();
 
+    const proxyUrl = getNextProxy();
+    const fetchOptions: RequestInit & { dispatcher?: unknown } = {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(req),
+        signal: controller.signal,
+    };
+    if (proxyUrl) {
+        fetchOptions.dispatcher = new ProxyAgent(proxyUrl);
+    }
+
     try {
-        const resp = await fetch(CURSOR_CHAT_API, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(req),
-            signal: controller.signal,
-        });
+        const resp = await fetch(CURSOR_CHAT_API, fetchOptions);
 
         if (!resp.ok) {
             const body = await resp.text();
