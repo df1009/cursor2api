@@ -106,6 +106,7 @@ export interface AppConfig {
     proxies?: string[];
     clashApi?: string;
     clashGroup?: string;
+    clashConfigPath?: string;
     cursorModel: string;
     vision?: {
         enabled: boolean;

@@ -28,6 +28,7 @@ export function getConfig(): AppConfig {
             if (yaml.proxies && Array.isArray(yaml.proxies)) config.proxies = yaml.proxies;
             if (yaml.clash_api) config.clashApi = yaml.clash_api;
             if (yaml.clash_group) config.clashGroup = yaml.clash_group;
+            if (yaml.clash_config_path) config.clashConfigPath = yaml.clash_config_path;
             if (yaml.cursor_model) config.cursorModel = yaml.cursor_model;
             if (yaml.fingerprint) {
                 if (yaml.fingerprint.user_agent) config.fingerprint.userAgent = yaml.fingerprint.user_agent;

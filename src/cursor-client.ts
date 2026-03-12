@@ -15,145 +15,92 @@ import { ProxyAgent } from 'undici';
 
 const CURSOR_CHAT_API = 'https://cursor.com/api/chat';
 
-// ==================== 节点池管理 ====================
-let proxyIndex = 0;
-let isDirect = false;
-let currentNode = '';
+// ==================== Proxy 池管理（请求级隔离，不切换 Clash 全局节点）====================
 
-const nodePool = {
-    active: [] as string[],     // 可用节点
-    inactive: [] as string[],   // 不可用节点（待恢复）
-    loaded: false,
+const proxyPool = {
+    active: [] as string[],    // 可用 proxy URL
+    inactive: [] as string[],  // 不可用（待恢复）
+    initialized: false,
     recovering: false,
 };
+let proxyIndex = 0;
 
-async function initNodePool(clashApi: string, group: string): Promise<void> {
-    if (nodePool.loaded) return;
-    const resp = await fetch(`${clashApi}/proxies/${encodeURIComponent(group)}`);
-    if (!resp.ok) return;
-    const data = await resp.json() as { all: string[] };
-    const skip = ['自动选择', '剩余流量', '距离下次重置', '套餐到期', 'DIRECT', 'REJECT'];
-    const nodes = (data.all || []).filter((n: string) => !skip.some(s => n.includes(s)));
-    // 加入直连特殊出口
-    nodes.push('__DIRECT__');
-    nodePool.active = nodes;
-    nodePool.loaded = true;
-    console.log(`[NodePool] 初始化节点池: ${nodes.length} 个节点`);
-    // 启动后台恢复检测（每分钟）
-    setInterval(() => recoverNodes(clashApi, group), 60 * 1000);
+/**
+ * 初始化 proxy 池（从 config.proxies 读取）
+ * 首次调用时初始化，后续直接用已有池
+ */
+function ensureProxyPool(): void {
+    if (proxyPool.initialized) return;
+    const config = getConfig();
+    const proxies = config.proxies || (config.proxy ? [config.proxy] : []);
+    proxyPool.active = [...proxies];
+    proxyPool.initialized = true;
+    console.log(`[ProxyPool] 初始化: ${proxyPool.active.length} 个代理`);
+    // 每 60s 后台恢复检测
+    if (proxyPool.active.length > 1) {
+        setInterval(() => recoverProxies(), 60 * 1000);
+    }
 }
 
-async function recoverNodes(clashApi: string, group: string): Promise<void> {
-    if (nodePool.recovering || nodePool.inactive.length === 0) return;
-    nodePool.recovering = true;
-    const proxy = getConfig().proxies?.[0] || getConfig().proxy;
-    const recovered: string[] = [];
-    for (const node of [...nodePool.inactive]) {
-        if (node === '__DIRECT__') { recovered.push(node); continue; }
-        await switchClashNode(clashApi, group, node);
-        await new Promise(r => setTimeout(r, 200));
-        if (proxy && await testNode(proxy)) {
-            recovered.push(node);
-            console.log(`[NodePool] 节点恢复: ${node}`);
+/**
+ * 轮询取下一个可用 proxy
+ * 若池为空（全部不可用），降级到原始列表第一个
+ */
+function getNextProxy(): string | undefined {
+    ensureProxyPool();
+    if (proxyPool.active.length === 0) {
+        // 全部下线，降级用原始配置第一个
+        const config = getConfig();
+        const fallback = config.proxies?.[0] || config.proxy;
+        if (fallback) console.warn(`[ProxyPool] 全部下线，降级使用: ${fallback}`);
+        return fallback;
+    }
+    const proxy = proxyPool.active[proxyIndex % proxyPool.active.length];
+    proxyIndex++;
+    console.log(`[ProxyPool] 使用代理 [${proxyIndex}/${proxyPool.active.length} active]: ${proxy}`);
+    return proxy;
+}
+
+/**
+ * 标记 proxy 不可用，移入 inactive
+ */
+function markProxyInactive(proxyUrl: string): void {
+    const idx = proxyPool.active.indexOf(proxyUrl);
+    if (idx !== -1) {
+        proxyPool.active.splice(idx, 1);
+        if (!proxyPool.inactive.includes(proxyUrl)) {
+            proxyPool.inactive.push(proxyUrl);
         }
+        console.warn(`[ProxyPool] 下线: ${proxyUrl}，剩余可用: ${proxyPool.active.length}`);
+    }
+}
+
+/**
+ * 后台恢复检测：对 inactive 列表里的 proxy 发 HEAD 请求，通了就移回 active
+ */
+async function recoverProxies(): Promise<void> {
+    if (proxyPool.recovering || proxyPool.inactive.length === 0) return;
+    proxyPool.recovering = true;
+    const recovered: string[] = [];
+    for (const proxyUrl of [...proxyPool.inactive]) {
+        try {
+            const resp = await fetch('https://www.google.com', {
+                method: 'HEAD',
+                signal: AbortSignal.timeout(5000),
+                dispatcher: new ProxyAgent(proxyUrl),
+            } as RequestInit & { dispatcher?: unknown });
+            if (resp.ok || resp.status < 500) {
+                recovered.push(proxyUrl);
+                console.log(`[ProxyPool] 恢复: ${proxyUrl}`);
+            }
+        } catch { /* 还不通，跳过 */ }
     }
     if (recovered.length > 0) {
-        nodePool.inactive = nodePool.inactive.filter(n => !recovered.includes(n));
-        nodePool.active.push(...recovered);
-        console.log(`[NodePool] 恢复 ${recovered.length} 个节点，当前可用: ${nodePool.active.length}`);
+        proxyPool.inactive = proxyPool.inactive.filter(p => !recovered.includes(p));
+        proxyPool.active.push(...recovered);
+        console.log(`[ProxyPool] 恢复 ${recovered.length} 个代理，当前可用: ${proxyPool.active.length}`);
     }
-    nodePool.recovering = false;
-}
-
-function markNodeInactive(node: string): void {
-    if (node === '__DIRECT__') return;
-    const idx = nodePool.active.indexOf(node);
-    if (idx !== -1) {
-        nodePool.active.splice(idx, 1);
-        nodePool.inactive.push(node);
-        console.warn(`[NodePool] 节点下池: ${node}，剩余可用: ${nodePool.active.length}`);
-    }
-}
-
-function getNextNode(): string | undefined {
-    if (nodePool.active.length === 0) return undefined;
-    const node = nodePool.active[proxyIndex % nodePool.active.length];
-    proxyIndex++;
-    return node;
-}
-
-async function loadClashNodes(clashApi: string, group: string): Promise<string[]> {
-    try {
-        const resp = await fetch(`${clashApi}/proxies/${encodeURIComponent(group)}`);
-        if (!resp.ok) return [];
-        const data = await resp.json() as { all: string[] };
-        // 过滤掉非节点项
-        const skip = ['自动选择', '剩余流量', '距离下次重置', '套餐到期', 'DIRECT', 'REJECT'];
-        const nodes = (data.all || []).filter((n: string) => !skip.some(s => n.includes(s)));
-        // 加入直连作为特殊出口
-        nodes.push('__DIRECT__');
-        return nodes;
-    } catch { return []; }
-}
-
-async function switchClashNode(clashApi: string, group: string, node: string): Promise<void> {
-    try {
-        await fetch(`${clashApi}/proxies/${encodeURIComponent(group)}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: node }),
-        });
-        console.log(`[Proxy] 切换节点: ${node}`);
-    } catch (e) {
-        console.warn(`[Proxy] 切换节点失败: ${e}`);
-    }
-}
-
-function getNextProxy(): string | undefined {
-    const config = getConfig();
-    const proxies = config.proxies;
-    if (proxies && proxies.length > 0) {
-        const proxy = proxies[proxyIndex % proxies.length];
-        proxyIndex++;
-        console.log(`[Proxy] 使用代理 [${proxyIndex}/${proxies.length}]: ${proxy}`);
-        return proxy;
-    }
-    if (config.proxy) return config.proxy;
-    return undefined;
-}
-
-async function testNode(proxyUrl: string): Promise<boolean> {
-    try {
-        const resp = await fetch('https://www.google.com', {
-            method: 'HEAD',
-            signal: AbortSignal.timeout(5000),
-            dispatcher: new ProxyAgent(proxyUrl),
-        } as RequestInit & { dispatcher?: unknown });
-        return resp.ok || resp.status < 500;
-    } catch {
-        return false;
-    }
-}
-
-async function rotateClashNode(): Promise<void> {
-    const config = getConfig();
-    if (!config.clashApi || !config.clashGroup) return;
-    await initNodePool(config.clashApi, config.clashGroup);
-    const node = getNextNode();
-    if (!node) {
-        console.warn(`[NodePool] 无可用节点，直连`);
-        isDirect = true;
-        return;
-    }
-    if (node === '__DIRECT__') {
-        console.log(`[Proxy] 使用直连出口`);
-        isDirect = true;
-        return;
-    }
-    isDirect = false;
-    currentNode = node;
-    await switchClashNode(config.clashApi, config.clashGroup, node);
-    console.log(`[NodePool] 使用节点: ${node}`);
+    proxyPool.recovering = false;
 }
 
 // Chrome 浏览器请求头模拟
@@ -191,15 +138,16 @@ export async function sendCursorRequest(
     onChunk: (event: CursorSSEEvent) => void,
 ): Promise<void> {
     const maxRetries = 2;
+    let lastProxyUrl: string | undefined;
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-            await sendCursorRequestInner(req, onChunk);
+            lastProxyUrl = await sendCursorRequestInner(req, onChunk);
             return;
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             console.error(`[Cursor] 请求失败 (${attempt}/${maxRetries}): ${msg}`);
-            // 请求失败，将当前节点标记下池
-            if (currentNode) markNodeInactive(currentNode);
+            // 请求失败，将当前 proxy 标记下线
+            if (lastProxyUrl) markProxyInactive(lastProxyUrl);
             if (attempt < maxRetries) {
                 console.log(`[Cursor] 2s 后重试...`);
                 await new Promise(r => setTimeout(r, 2000));
@@ -213,7 +161,7 @@ export async function sendCursorRequest(
 async function sendCursorRequestInner(
     req: CursorChatRequest,
     onChunk: (event: CursorSSEEvent) => void,
-): Promise<void> {
+): Promise<string | undefined> {
     const headers = getChromeHeaders();
 
     console.log(`[Cursor] 发送请求: model=${req.model}, messages=${req.messages.length}`);
@@ -238,8 +186,8 @@ async function sendCursorRequestInner(
     // 启动初始计时（等待服务器开始响应）
     resetIdleTimer();
 
-    await rotateClashNode();
-    const proxyUrl = isDirect ? undefined : getNextProxy();
+    // ★ 请求级代理隔离：每个请求独立取一个 proxy，轮询 proxies 列表，不切换 Clash 全局节点
+    const proxyUrl = getNextProxy();
     const fetchOptions: RequestInit & { dispatcher?: unknown } = {
         method: 'POST',
         headers,
@@ -305,6 +253,7 @@ async function sendCursorRequestInner(
     } finally {
         if (idleTimer) clearTimeout(idleTimer);
     }
+    return proxyUrl;
 }
 
 /**
