@@ -1,6 +1,6 @@
 import { readFileSync, existsSync, watch, type FSWatcher } from 'fs';
 import { parse as parseYaml } from 'yaml';
-import type { AppConfig } from './types.js';
+import type { AppConfig, ProxyPoolConfig } from './types.js';
 
 let config: AppConfig;
 let watcher: FSWatcher | null = null;
@@ -49,6 +49,33 @@ function parseYamlConfig(defaults: AppConfig): { config: AppConfig; raw: Record<
                 model: yaml.vision.model || 'gpt-4o-mini',
                 proxy: yaml.vision.proxy || undefined,
             };
+        }
+        // ★ 代理池配置（proxy分支功能）
+        if (yaml.proxy_pool && yaml.proxy_pool.enabled !== false) {
+            const pp = yaml.proxy_pool;
+            const proxyList: Array<{ url: string; name: string }> = [];
+            if (Array.isArray(pp.proxies)) {
+                for (const p of pp.proxies) {
+                    if (typeof p === 'string') {
+                        proxyList.push({ url: p, name: p });
+                    } else if (p && typeof p.url === 'string') {
+                        proxyList.push({ url: p.url, name: p.name || p.url });
+                    }
+                }
+            }
+            if (proxyList.length > 0) {
+                result.proxyPool = {
+                    enabled: true,
+                    proxies: proxyList,
+                    ttlSec: pp.ttl_sec ?? 60,
+                    perProxyTimeoutSec: pp.per_proxy_timeout_sec ?? 10,
+                    maxFailures: pp.max_failures ?? 3,
+                    cooldownBaseSec: pp.cooldown_base_sec ?? 120,
+                    maxCooldownSec: pp.max_cooldown_sec ?? 1800,
+                    maxProxyRetries: pp.max_proxy_retries ?? 3,
+                    fallbackDirect: pp.fallback_direct !== false,
+                } as ProxyPoolConfig;
+            }
         }
         // ★ API 鉴权 token
         if (yaml.auth_tokens) {
