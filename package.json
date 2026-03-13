@@ -13,6 +13,7 @@
     "eventsource-parser": "^3.0.1",
     "express": "^5.1.0",
     "tesseract.js": "^7.0.0",
+    "undici": "^7.0.0",
     "uuid": "^11.1.0",
     "yaml": "^2.7.1"
   },

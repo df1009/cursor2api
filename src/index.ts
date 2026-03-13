@@ -10,9 +10,15 @@ import express from 'express';
 import { getConfig } from './config.js';
 import { handleMessages, listModels, countTokens } from './handler.js';
 import { handleOpenAIChatCompletions } from './openai-handler.js';
+import { initProxyPool, getProxyPool } from './proxy-pool.js';
 
 const app = express();
 const config = getConfig();
+
+// 初始化代理池（如果配置了）
+if (config.proxyPool?.enabled && config.proxyPool.proxies.length > 0) {
+    initProxyPool(config.proxyPool);
+}
 
 // 解析 JSON body（增大限制以支持 base64 图片，单张图片可达 10MB+）
 app.use(express.json({ limit: '50mb' }));
@@ -49,6 +55,16 @@ app.get('/v1/models', listModels);
 // 健康检查
 app.get('/health', (_req, res) => {
     res.json({ status: 'ok', version: '2.3.2' });
+});
+
+// 代理池状态
+app.get('/proxy-status', (_req, res) => {
+    const pool = getProxyPool();
+    if (!pool) {
+        res.json({ enabled: false, message: '代理池未启用' });
+        return;
+    }
+    res.json({ enabled: true, ...pool.status() });
 });
 
 // 根路径
