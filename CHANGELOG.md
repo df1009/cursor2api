@@ -1,5 +1,35 @@
 # Changelog
 
+## v2.7.2 (2026-03-17)
+
+### 🖥️ 日志查看器全面升级
+
+- **前端重构为独立静态文件**：`logs.html` / `logs.css` / `logs.js` 分离到 `public/` 目录，告别单文件嵌入，更易维护
+- **🌙 日/夜主题切换**：一键切换明暗主题（☀️/🌙），自动检测系统偏好，选择持久化到 `localStorage`
+- **暗色主题完整适配**：深蓝渐变背景，所有 UI 元素（标签、状态灯、代码块、JSON 高亮）均有独立暗色配色
+- **标题提取修复**：过滤 `<system-reminder>...</system-reminder>` 注入内容和 Claude Code `"First, think step by step..."` 引导语，确保标题显示用户真实提问
+- **登录页同步更新**：独立 `login.html`，视觉风格与日志页一致
+
+### 🧹 工程化改进
+
+- **移除 `WELL_KNOWN_TOOLS` 白名单**：所有工具统一保留描述（截取前 50 字符），简化逻辑
+- **`config.yaml` 停止追踪**：含敏感 token 的配置文件加入 `.gitignore`，不再上传
+- **新增 `config.yaml.example`**：配置模板，安全默认值，用户只需 `cp config.yaml.example config.yaml`
+- **`.gitignore` 清理**：去除重复条目，排除开发截图文件
+- **Thinking 默认关闭**：`thinking.enabled` 默认值改为 `false`
+- **Express v5 兼容**：修复 `path-to-regexp` 通配符路由报错，改用 `express.static` 中间件
+- **CSS 兼容性**：补充标准 `background-clip` 属性
+
+### 📝 README 大幅更新
+
+- 新增日志查看器功能介绍（特性列表 + 鉴权说明）
+- 新增配置项速查表格
+- 新增环境变量参考表
+- 项目结构补充 `public/` 目录说明
+- 配置说明改为引导用户从 `config.yaml.example` 复制
+
+---
+
 ## v2.7.1 (2026-03-16)
 
 ### 🗜️ 智能历史压缩算法
@@ -58,7 +88,7 @@
 - 提取在拒绝检测之前执行，防止 thinking 内容触发误判
 - 未启用时仍会剥离 thinking 标签（防误判），但内容不返回
 
-### 🔧 已知工具跳过描述
+### 🔧 已知工具跳过描述（已在 v2.7.2 移除）
 
 - `WELL_KNOWN_TOOLS` 集合中的 17 个常用工具（Read、Write、Bash 等）不再生成描述文本
 - 减少约 30% 工具指令输入，节省上下文空间
