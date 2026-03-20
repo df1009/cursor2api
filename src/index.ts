@@ -148,8 +148,8 @@ app.get('/', (_req, res) => {
 
 // ==================== 启动 ====================
 
-// ★ 从日志文件加载历史（必须在 listen 之前）
-loadLogsFromFiles();
+// ★ 从日志文件加载历史（已禁用，防止启动时重放历史请求导致卡死）
+// loadLogsFromFiles();
 
 app.listen(config.port, () => {
     const auth = config.authTokens?.length ? `${config.authTokens.length} token(s)` : 'open';
