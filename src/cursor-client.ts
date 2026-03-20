@@ -90,9 +90,7 @@ export async function sendCursorRequest(
             : { url: null, signal: null };
 
         try {
-            await sendCursorRequestInner(req, onChunk, externalSignal);
-
-            await sendCursorRequestInner(req, onChunk, proxyUrl, proxySignal);
+            await sendCursorRequestInner(req, onChunk, externalSignal, proxyUrl, proxySignal);
             // 成功，告知代理池
             if (pool && proxyUrl) pool.release(proxyUrl, true);
             return;
@@ -102,9 +100,6 @@ export async function sendCursorRequest(
             // ★ 退化循环中止不重试 — 已有的内容是有效的，重试也会重蹈覆辙
             if (err instanceof Error && err.message === 'DEGENERATE_LOOP_ABORTED') return;
             const msg = err instanceof Error ? err.message : String(err);
-            console.error(`[Cursor] 请求失败 (${attempt}/${maxRetries}): ${msg.substring(0, 100)}`);
-            if (attempt < maxRetries) {
-
             // 提取 HTTP 状态码（如果有）
             const statusMatch = msg.match(/HTTP (\d+)/);
             const httpStatus = statusMatch ? parseInt(statusMatch[1]) : undefined;
@@ -141,11 +136,6 @@ async function sendCursorRequestInner(
     req: CursorChatRequest,
     onChunk: (event: CursorSSEEvent) => void,
     externalSignal?: AbortSignal,
-): Promise<void> {
-    const headers = getChromeHeaders();
-
-    // 详细日志记录在 handler 层
-
     proxyUrl: string | null = null,
     proxySignal: AbortSignal | null = null,
 ): Promise<void> {
@@ -214,12 +204,9 @@ async function sendCursorRequestInner(
             method: 'POST',
             headers,
             body: JSON.stringify(req),
-            signal: controller.signal,
-            ...getProxyFetchOptions(),
-        } as any);
-
-            signal,
-        };
+            signal: proxyUrl ? signal : controller.signal,
+            ...(proxyUrl ? {} : getProxyFetchOptions()),
+        } as any;
         if (dispatcher) fetchOptions.dispatcher = dispatcher;
 
         const resp = await fetchFn(CURSOR_CHAT_API, fetchOptions as RequestInit);

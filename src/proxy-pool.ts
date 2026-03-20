@@ -52,6 +52,8 @@ export class ProxyPool {
      * 返回 { url, signal }，url=null 表示直连兜底
      */
     acquire(): AcquireResult {
+        const available = this.entries.filter(e => e.status === 'active').map(e => e.name).join(' | ') || '无（直连）';
+        console.log(`[ProxyPool] acquire() 调用，可用: ${available}`);
         // 先把冷却到期的代理复活
         this.reviveExpired();
 
@@ -75,6 +77,7 @@ export class ProxyPool {
                 this.triggerAsyncCheck(entry);
             }
 
+            console.log(`[ProxyPool] → 选中: ${entry.name} (${entry.url})`);
             return {
                 url: entry.url,
                 signal: entry.invalidateController.signal,
